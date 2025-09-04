@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # @describe BreachVIP API client for breach data search
-# @arg term! "Search term to look up" [string]
+# @arg term "Search term to look up" [string]
 # @arg fields* "Fields to search (email, ip, username, password, hash)" [string]
 # @option -c --categories "Categories to filter by (only 'minecraft' supported currently)" [string]
 # @flag   -w --wildcard "Enable wildcard search (* and ? operators)"
@@ -56,22 +56,22 @@ format_case() {
 make_request() {
   local payload="$1"
   local temp_file=$(mktemp)
-  
+
   local http_code=$(curl -s -X POST \
     -H "Content-Type: application/json" \
     -d "$payload" \
     -w "%{http_code}" \
     -o "$temp_file" \
     "${API_BASE}/api/search")
-  
+
   local response=$(cat "$temp_file")
   rm -f "$temp_file"
-  
+
   if [ -z "$http_code" ] || [ "$http_code" = "000" ]; then
     printf "${red}Error:${reset} Connection failed - check network connectivity to %s\n" "$API_BASE" >&2
     exit 1
   fi
-  
+
   if [ "$http_code" -ne 200 ]; then
     case "$http_code" in
     400)
@@ -96,8 +96,6 @@ make_request() {
 
   echo "$response"
 }
-
-
 
 validate_categories() {
   local categories="$1"
@@ -127,58 +125,58 @@ validate_term() {
 show_help() {
   printf "\n${bold}${magenta}BREACH VIP CLIENT${reset} ${yellow}🔍${reset}\n"
   printf "${cyan}Breach database search across multiple field types${reset}\n\n"
-  
+
   printf "${bold}${green}USAGE${reset}\n"
   printf "  ${cyan}$(basename "$0")${reset} ${yellow}<term>${reset} ${green}<fields...>${reset} ${blue}[options]${reset}\n\n"
-  
+
   printf "${bold}${green}FIELDS${reset}\n"
   printf "  ${yellow}email${reset}        Search in email addresses\n"
   printf "  ${yellow}ip${reset}           Search in IP addresses\n"
   printf "  ${yellow}username${reset}     Search in usernames\n"
   printf "  ${yellow}password${reset}     Search in passwords\n"
   printf "  ${yellow}hash${reset}         Search in password hashes\n\n"
-  
+
   printf "${bold}${yellow}OPTIONS${reset}\n"
   printf "  ${yellow}-w, --wildcard${reset}       Enable wildcards (* and ?)\n"
   printf "  ${yellow}-s, --case-sensitive${reset} Enable case-sensitive search\n"
   printf "  ${yellow}-c, --categories${reset}     Filter by categories (minecraft only)\n"
   printf "  ${yellow}-j, --json${reset}           Output raw JSON\n"
   printf "  ${yellow}-q, --quiet${reset}          Suppress colored output\n\n"
-  
+
   printf "${bold}${red}WILDCARD PATTERNS${reset}\n"
   printf "  ${yellow}*${reset}  Match ${bold}zero or more${reset} characters\n"
   printf "  ${yellow}?${reset}  Match ${bold}exactly one${reset} character\n\n"
-  
+
   printf "${bold}${green}EXAMPLES${reset}\n"
   printf "  ${cyan}Search for email:${reset}\n"
   printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}john.doe@example.com${reset} ${green}email${reset}\n\n"
-  
+
   printf "  ${cyan}Search across multiple fields:${reset}\n"
   printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}192.168.1.1${reset} ${green}ip email username${reset}\n\n"
-  
+
   printf "  ${cyan}Wildcard email search:${reset}\n"
   printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}\"john*@example.com\"${reset} ${green}email${reset} ${blue}--wildcard${reset}\n\n"
-  
+
   printf "  ${cyan}Search username with pattern:${reset}\n"
   printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}\"admin*\"${reset} ${green}username${reset} ${blue}--wildcard${reset}\n\n"
-  
+
   printf "  ${cyan}With category filter:${reset}\n"
   printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}\"user@minecraft.net\"${reset} ${green}email${reset} ${blue}--categories${reset} minecraft\n\n"
-  
+
   printf "  ${cyan}JSON output:${reset}\n"
   printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}test123${reset} ${green}username password${reset} ${blue}--json${reset}\n\n"
 }
 
 format_search_results() {
   local response="$1"
-  
+
   if [ -z "$response" ] || ! echo "$response" | jq empty 2>/dev/null; then
     printf "${red}Error:${reset} Invalid response from server\n" >&2
     return 1
   fi
-  
+
   local results_count=$(echo "$response" | jq -r '.results | length' 2>/dev/null || echo "0")
-  
+
   if [ -z "$results_count" ] || [ "$results_count" -eq 0 ]; then
     printf "${yellow}No results found${reset}\n"
     return
@@ -213,6 +211,10 @@ format_search_results() {
     done
 }
 
+if [ -z "$argc_term" ]; then
+  show_help
+  exit 0
+fi
 
 if [ ${#argc_fields[@]} -eq 0 ]; then
   echo "${red}Error:${reset} At least one field type must be specified (email, ip, username, password, hash)" >&2
