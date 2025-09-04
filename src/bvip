@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+
+# @describe BreachVIP API client for breach data search
+# @arg term "Search term (supports wildcards * and ?)" [string]
+# @option -f --fields "Fields to search in (comma-separated)" [string] @default "email"
+# @option -c --categories "Categories to filter by (only 'minecraft' supported currently)" [string]
+# @flag   -w --wildcard "Enable wildcard search (* and ? operators)"
+# @flag   -s --case-sensitive "Enable case-sensitive search"
+# @flag   -j --json "Output raw JSON instead of formatted results"
+# @flag   -q --quiet "Suppress colored output"
+# @meta require-tools curl,jq
+
+eval "$(argc --argc-eval "$0" "$@")"
+
+setup_colors() {
+  if [ "$argc_quiet" = 1 ] || [ -z "$TERM" ] || [ "$TERM" = "dumb" ]; then
+    bold="" reset="" blue="" green="" yellow="" cyan="" magenta="" red=""
+  else
+    # Use ANSI escape codes for better compatibility across macOS and Linux
+    if command -v tput >/dev/null 2>&1 && [ -n "$TERM" ]; then
+      # Try tput first (works on both macOS and Linux)
+      bold=$(tput bold 2>/dev/null || printf '\033[1m')
+      reset=$(tput sgr0 2>/dev/null || printf '\033[0m')
+      blue=$(tput setaf 4 2>/dev/null || printf '\033[34m')
+      green=$(tput setaf 2 2>/dev/null || printf '\033[32m')
+      yellow=$(tput setaf 3 2>/dev/null || printf '\033[33m')
+      cyan=$(tput setaf 6 2>/dev/null || printf '\033[36m')
+      magenta=$(tput setaf 5 2>/dev/null || printf '\033[35m')
+      red=$(tput setaf 1 2>/dev/null || printf '\033[31m')
+    else
+      # Fall back to ANSI escape codes
+      bold='\033[1m'
+      reset='\033[0m'
+      blue='\033[34m'
+      green='\033[32m'
+      yellow='\033[33m'
+      cyan='\033[36m'
+      magenta='\033[35m'
+      red='\033[31m'
+    fi
+  fi
+}
+setup_colors
+
+API_BASE="https://breach.vip"
+
+print_kv() {
+  printf "${bold}%s:${reset} %s\n" "$1" "$2"
+}
+
+print_section() {
+  printf "\n${bold}%s:${reset}\n" "$1"
+}
+
+format_case() {
+  echo "$(tr '[:lower:]' '[:upper:]' <<<${1:0:1})${1:1}"
+}
+
+make_request() {
+  local payload="$1"
+  local temp_file=$(mktemp)
+  
+  # Make single request and capture both response and status code
+  local http_code=$(curl -s -X POST \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
+    -w "%{http_code}" \
+    -o "$temp_file" \
+    "${API_BASE}/api/search")
+  
+  local response=$(cat "$temp_file")
+  rm -f "$temp_file"
+  
+  # Check for connection errors
+  if [ -z "$http_code" ] || [ "$http_code" = "000" ]; then
+    printf "${red}Error:${reset} Connection failed - check network connectivity to %s\n" "$API_BASE" >&2
+    exit 1
+  fi
+  
+  if [ "$http_code" -ne 200 ]; then
+    case "$http_code" in
+    400)
+      error_msg=$(echo "$response" | jq -r '.error // "Bad request"' 2>/dev/null || echo "Bad request")
+      printf "${red}Error:${reset} Bad request: ${red}%s${reset}\n" "$error_msg" >&2
+      ;;
+    405)
+      printf "${red}Error:${reset} Method not allowed\n" >&2
+      ;;
+    500)
+      printf "${red}Error:${reset} Internal server error\n" >&2
+      ;;
+    *)
+      printf "${red}Error:${reset} HTTP %s\n" "$http_code" >&2
+      if [ -n "$response" ]; then
+        printf "Response: %s\n" "$response" >&2
+      fi
+      ;;
+    esac
+    exit 1
+  fi
+
+  echo "$response"
+}
+
+validate_fields() {
+  local fields="$1"
+  local valid_fields="ip domain steamid name uuid username email discordid phone password"
+
+  IFS=',' read -ra field_array <<<"$fields"
+
+  if [ ${#field_array[@]} -gt 10 ]; then
+    echo "${red}Error:${reset} Maximum 10 fields allowed, got ${#field_array[@]}" >&2
+    exit 1
+  fi
+
+  for field in "${field_array[@]}"; do
+    field=$(echo "$field" | xargs) # trim whitespace
+    if ! echo "$valid_fields" | grep -q "\b$field\b"; then
+      echo "${red}Error:${reset} Invalid field '${field}'. Valid fields are: ${valid_fields}" >&2
+      exit 1
+    fi
+  done
+}
+
+validate_categories() {
+  local categories="$1"
+  if [ -n "$categories" ] && [ "$categories" != "minecraft" ]; then
+    echo "${red}Error:${reset} Invalid category '${categories}'. Only 'minecraft' is currently supported." >&2
+    exit 1
+  fi
+}
+
+validate_term() {
+  local term="$1"
+  local wildcard="$2"
+
+  if [ ${#term} -lt 1 ] || [ ${#term} -gt 99 ]; then
+    echo "${red}Error:${reset} Search term must be between 1 and 99 characters" >&2
+    exit 1
+  fi
+
+  if [ "$wildcard" = 1 ]; then
+    if [[ "$term" =~ ^[\*\?] ]]; then
+      echo "${red}Error:${reset} Wildcard search terms cannot begin with * or ?" >&2
+      exit 1
+    fi
+  fi
+}
+
+show_help() {
+  printf "\n${bold}${magenta}BREACH VIP CLIENT${reset} ${yellow}🔍${reset}\n"
+  printf "${cyan}Search breach databases fast${reset}\n\n"
+  
+  printf "${bold}${green}USAGE${reset}\n"
+  printf "  ${cyan}$(basename "$0")${reset} ${yellow}<search-term>${reset} ${blue}[options]${reset}\n\n"
+  
+  printf "${bold}${blue}SEARCHABLE FIELDS${reset}\n"
+  printf "  ${green}email${reset}       Email addresses ${blue}(default)${reset}\n"
+  printf "  ${green}username${reset}    Usernames\n"
+  printf "  ${green}password${reset}    Passwords ${red}⚠${reset}\n"
+  printf "  ${green}name${reset}        Full names\n"
+  printf "  ${green}ip${reset}          IP addresses\n"
+  printf "  ${green}domain${reset}      Domain names\n"
+  printf "  ${green}phone${reset}       Phone numbers\n"
+  printf "  ${green}discordid${reset}   Discord IDs\n"
+  printf "  ${green}steamid${reset}     Steam IDs\n"
+  printf "  ${green}uuid${reset}        UUIDs\n\n"
+  
+  printf "${bold}${yellow}OPTIONS${reset}\n"
+  printf "  ${yellow}-f, --fields${reset}         Fields to search (comma-separated)\n"
+  printf "  ${yellow}-w, --wildcard${reset}       Enable wildcards (* and ?)\n"
+  printf "  ${yellow}-s, --case-sensitive${reset} Enable case-sensitive search\n"
+  printf "  ${yellow}-c, --categories${reset}     Filter by categories\n"
+  printf "  ${yellow}-j, --json${reset}           Output raw JSON\n"
+  printf "  ${yellow}-q, --quiet${reset}          Suppress colored output\n\n"
+  
+  printf "${bold}${red}WILDCARD PATTERNS${reset}\n"
+  printf "  ${yellow}*${reset}  Match ${bold}zero or more${reset} characters\n"
+  printf "  ${yellow}?${reset}  Match ${bold}exactly one${reset} character\n\n"
+  
+  printf "${bold}${green}EXAMPLES${reset}\n"
+  printf "  ${cyan}Basic search:${reset}\n"
+  printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}john.doe@example.com${reset}\n\n"
+  
+  printf "  ${cyan}Wildcard username search:${reset}\n"
+  printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}\"john*\"${reset} ${blue}--fields${reset} username,email ${blue}--wildcard${reset}\n\n"
+  
+  printf "  ${cyan}Pattern matching:${reset}\n"
+  printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}\"c?t?\"${reset} ${blue}--fields${reset} name ${blue}--wildcard${reset}\n\n"
+  
+  printf "  ${cyan}Domain search with category filter:${reset}\n"
+  printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}\"*.minecraft.net\"${reset} ${blue}--fields${reset} domain ${blue}--wildcard${reset} ${blue}--categories${reset} minecraft\n\n"
+  
+  printf "  ${cyan}IP range search:${reset}\n"
+  printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}\"192.168.*\"${reset} ${blue}--fields${reset} ip ${blue}--wildcard${reset}\n\n"
+}
+
+format_search_results() {
+  local response="$1"
+  
+  # Validate response is valid JSON
+  if [ -z "$response" ] || ! echo "$response" | jq empty 2>/dev/null; then
+    printf "${red}Error:${reset} Invalid response from server\n" >&2
+    return 1
+  fi
+  
+  local results_count=$(echo "$response" | jq -r '.results | length' 2>/dev/null || echo "0")
+  
+  if [ -z "$results_count" ] || [ "$results_count" -eq 0 ]; then
+    printf "${yellow}No results found${reset}\n"
+    return
+  fi
+
+  printf "${bold}Found ${green}%s${reset} result(s):\n\n" "$results_count"
+
+  # Group results by source for better readability
+  echo "$response" | jq -r '.results | group_by(.source) | .[] | "\(.[0].source)|\(length)|\(. | tostring)"' |
+    while IFS="|" read -r source count items_json; do
+      printf "${bold}${blue}%s${reset} (${yellow}%s${reset} record(s))\n" "$source" "$count"
+
+      echo "$items_json" | jq -r '.[] | @json' | while read -r item; do
+        # Parse categories - could be string or array
+        local categories=$(echo "$item" | jq -r 'if .categories | type == "array" then .categories | join(", ") else .categories end')
+
+        printf "  ${cyan}Categories:${reset} ${magenta}%s${reset}\n" "$categories"
+
+        # Print all additional fields (everything except source and categories)
+        echo "$item" | jq -r 'to_entries | map(select(.key != "source" and .key != "categories")) | .[] | "\(.key)|\(.value)"' |
+          while IFS="|" read -r key value; do
+            if [ "$key" = "password" ]; then
+              # Show password without masking
+              printf "  ${cyan}%s:${reset} ${red}%s${reset}\n" "$(format_case "$key")" "$value"
+            elif [ "$key" = "email" ]; then
+              printf "  ${cyan}%s:${reset} ${green}%s${reset}\n" "$(format_case "$key")" "$value"
+            elif [ "$key" = "ip" ]; then
+              printf "  ${cyan}%s:${reset} ${blue}%s${reset}\n" "$(format_case "$key")" "$value"
+            else
+              printf "  ${cyan}%s:${reset} %s\n" "$(format_case "$key")" "$value"
+            fi
+          done
+        printf "\n"
+      done
+      printf "\n"
+    done
+}
+
+# Main execution
+if [ -z "$argc_term" ]; then
+  show_help
+  exit 0
+fi
+
+# Validate inputs
+validate_term "$argc_term" "$argc_wildcard"
+validate_fields "$argc_fields"
+validate_categories "$argc_categories"
+
+# Build request payload
+fields_array="[\"$(echo "$argc_fields" | sed 's/,/","/g')\"]"
+
+payload="{\"term\":\"$argc_term\",\"fields\":$fields_array"
+
+if [ "$argc_wildcard" = 1 ]; then
+  payload="$payload,\"wildcard\":true"
+fi
+
+if [ "$argc_case_sensitive" = 1 ]; then
+  payload="$payload,\"case_sensitive\":true"
+fi
+
+if [ -n "$argc_categories" ]; then
+  payload="$payload,\"categories\":[\"$argc_categories\"]"
+fi
+
+payload="$payload}"
+
+# Make the request
+response=$(make_request "$payload")
+
+# Output results
+if [ "$argc_json" = 1 ]; then
+  echo "$response" | jq
+else
+  format_search_results "$response"
+fi
