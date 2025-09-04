@@ -2,7 +2,7 @@
 
 # @describe BreachVIP API client for breach data search
 # @arg term "Search term to look up" [string]
-# @arg fields* "Fields to search (email, ip, username, password, hash)" [string]
+# @arg fields* "Fields to search (ip, domain, steamid, name, uuid, username, email, discordid, phone, password)" [string]
 # @option -c --categories "Categories to filter by (only 'minecraft' supported currently)" [string]
 # @flag   -w --wildcard "Enable wildcard search (* and ? operators)"
 # @flag   -s --case-sensitive "Enable case-sensitive search"
@@ -130,11 +130,16 @@ show_help() {
   printf "  ${cyan}$(basename "$0")${reset} ${yellow}<term>${reset} ${green}<fields...>${reset} ${blue}[options]${reset}\n\n"
 
   printf "${bold}${green}FIELDS${reset}\n"
-  printf "  ${yellow}email${reset}        Search in email addresses\n"
   printf "  ${yellow}ip${reset}           Search in IP addresses\n"
+  printf "  ${yellow}domain${reset}       Search in domain names\n"
+  printf "  ${yellow}steamid${reset}      Search in Steam IDs\n"
+  printf "  ${yellow}name${reset}         Search in names\n"
+  printf "  ${yellow}uuid${reset}         Search in UUIDs\n"
   printf "  ${yellow}username${reset}     Search in usernames\n"
-  printf "  ${yellow}password${reset}     Search in passwords\n"
-  printf "  ${yellow}hash${reset}         Search in password hashes\n\n"
+  printf "  ${yellow}email${reset}        Search in email addresses\n"
+  printf "  ${yellow}discordid${reset}    Search in Discord IDs\n"
+  printf "  ${yellow}phone${reset}        Search in phone numbers\n"
+  printf "  ${yellow}password${reset}     Search in passwords\n\n"
 
   printf "${bold}${yellow}OPTIONS${reset}\n"
   printf "  ${yellow}-w, --wildcard${reset}       Enable wildcards (* and ?)\n"
@@ -153,6 +158,21 @@ show_help() {
 
   printf "  ${cyan}Search across multiple fields:${reset}\n"
   printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}192.168.1.1${reset} ${green}ip email username${reset}\n\n"
+
+  printf "  ${cyan}Search by Steam ID:${reset}\n"
+  printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}76561198000000000${reset} ${green}steamid${reset}\n\n"
+
+  printf "  ${cyan}Search by Discord ID:${reset}\n"
+  printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}123456789012345678${reset} ${green}discordid${reset}\n\n"
+
+  printf "  ${cyan}Search by domain:${reset}\n"
+  printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}example.com${reset} ${green}domain${reset}\n\n"
+
+  printf "  ${cyan}Search by phone number:${reset}\n"
+  printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}\"+1-555-0123\"${reset} ${green}phone${reset}\n\n"
+
+  printf "  ${cyan}Search by UUID:${reset}\n"
+  printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}550e8400-e29b-41d4-a716-446655440000${reset} ${green}uuid${reset}\n\n"
 
   printf "  ${cyan}Wildcard email search:${reset}\n"
   printf "    ${green}\$${reset} ${cyan}$(basename "$0")${reset} ${yellow}\"john*@example.com\"${reset} ${green}email${reset} ${blue}--wildcard${reset}\n\n"
@@ -195,15 +215,35 @@ format_search_results() {
 
         echo "$item" | jq -r 'to_entries | map(select(.key != "source" and .key != "categories")) | .[] | "\(.key)|\(.value)"' |
           while IFS="|" read -r key value; do
-            if [ "$key" = "password" ]; then
+            case "$key" in
+            "password")
               printf "  ${cyan}%s:${reset} ${red}%s${reset}\n" "$(format_case "$key")" "$value"
-            elif [ "$key" = "email" ]; then
+              ;;
+            "email")
               printf "  ${cyan}%s:${reset} ${green}%s${reset}\n" "$(format_case "$key")" "$value"
-            elif [ "$key" = "ip" ]; then
+              ;;
+            "ip")
               printf "  ${cyan}%s:${reset} ${blue}%s${reset}\n" "$(format_case "$key")" "$value"
-            else
+              ;;
+            "domain")
+              printf "  ${cyan}%s:${reset} ${blue}%s${reset}\n" "$(format_case "$key")" "$value"
+              ;;
+            "steamid")
+              printf "  ${cyan}%s:${reset} ${yellow}%s${reset}\n" "Steam ID" "$value"
+              ;;
+            "discordid")
+              printf "  ${cyan}%s:${reset} ${magenta}%s${reset}\n" "Discord ID" "$value"
+              ;;
+            "phone")
+              printf "  ${cyan}%s:${reset} ${green}%s${reset}\n" "$(format_case "$key")" "$value"
+              ;;
+            "uuid")
+              printf "  ${cyan}%s:${reset} ${cyan}%s${reset}\n" "UUID" "$value"
+              ;;
+            *)
               printf "  ${cyan}%s:${reset} %s\n" "$(format_case "$key")" "$value"
-            fi
+              ;;
+            esac
           done
         printf "\n"
       done
@@ -217,15 +257,17 @@ if [ -z "$argc_term" ]; then
 fi
 
 if [ ${#argc_fields[@]} -eq 0 ]; then
-  echo "${red}Error:${reset} At least one field type must be specified (email, ip, username, password, hash)" >&2
+  echo "${red}Error:${reset} At least one field type must be specified" >&2
+  echo "Valid fields: ip, domain, steamid, name, uuid, username, email, discordid, phone, password" >&2
   echo "Usage: $(basename "$0") <term> <fields...> [options]" >&2
   exit 1
 fi
 
-valid_fields=("email" "ip" "username" "password" "hash")
+valid_fields=("ip" "domain" "steamid" "name" "uuid" "username" "email" "discordid" "phone" "password")
 for field in "${argc_fields[@]}"; do
   if ! [[ " ${valid_fields[@]} " =~ " ${field} " ]]; then
-    echo "${red}Error:${reset} Invalid field type '${field}'. Valid fields are: email, ip, username, password, hash" >&2
+    echo "${red}Error:${reset} Invalid field type '${field}'" >&2
+    echo "Valid fields: ip, domain, steamid, name, uuid, username, email, discordid, phone, password" >&2
     exit 1
   fi
 done
