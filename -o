@@ -300,7 +300,9 @@ setup_colors() {
   if [ "$argc_quiet" = 1 ] || [ -z "$TERM" ] || [ "$TERM" = "dumb" ]; then
     bold="" reset="" blue="" green="" yellow="" cyan="" magenta="" red=""
   else
+    # Use ANSI escape codes for better compatibility across macOS and Linux
     if command -v tput >/dev/null 2>&1 && [ -n "$TERM" ]; then
+      # Try tput first (works on both macOS and Linux)
       bold=$(tput bold 2>/dev/null || printf '\033[1m')
       reset=$(tput sgr0 2>/dev/null || printf '\033[0m')
       blue=$(tput setaf 4 2>/dev/null || printf '\033[34m')
@@ -310,6 +312,7 @@ setup_colors() {
       magenta=$(tput setaf 5 2>/dev/null || printf '\033[35m')
       red=$(tput setaf 1 2>/dev/null || printf '\033[31m')
     else
+      # Fall back to ANSI escape codes
       bold='\033[1m'
       reset='\033[0m'
       blue='\033[34m'
@@ -341,6 +344,7 @@ make_request() {
   local payload="$1"
   local temp_file=$(mktemp)
   
+  # Make single request and capture both response and status code
   local http_code=$(curl -s -X POST \
     -H "Content-Type: application/json" \
     -d "$payload" \
@@ -351,6 +355,7 @@ make_request() {
   local response=$(cat "$temp_file")
   rm -f "$temp_file"
   
+  # Check for connection errors
   if [ -z "$http_code" ] || [ "$http_code" = "000" ]; then
     printf "${red}Error:${reset} Connection failed - check network connectivity to %s\n" "$API_BASE" >&2
     exit 1
@@ -456,6 +461,7 @@ show_help() {
 format_search_results() {
   local response="$1"
   
+  # Validate response is valid JSON
   if [ -z "$response" ] || ! echo "$response" | jq empty 2>/dev/null; then
     printf "${red}Error:${reset} Invalid response from server\n" >&2
     return 1
@@ -470,18 +476,22 @@ format_search_results() {
 
   printf "${bold}Found ${green}%s${reset} result(s):\n\n" "$results_count"
 
+  # Group results by source for better readability
   echo "$response" | jq -r '.results | group_by(.source) | .[] | "\(.[0].source)|\(length)|\(. | tostring)"' |
     while IFS="|" read -r source count items_json; do
       printf "${bold}${blue}%s${reset} (${yellow}%s${reset} record(s))\n" "$source" "$count"
 
       echo "$items_json" | jq -r '.[] | @json' | while read -r item; do
+        # Parse categories - could be string or array
         local categories=$(echo "$item" | jq -r 'if .categories | type == "array" then .categories | join(", ") else .categories end')
 
         printf "  ${cyan}Categories:${reset} ${magenta}%s${reset}\n" "$categories"
 
+        # Print all additional fields (everything except source and categories)
         echo "$item" | jq -r 'to_entries | map(select(.key != "source" and .key != "categories")) | .[] | "\(.key)|\(.value)"' |
           while IFS="|" read -r key value; do
             if [ "$key" = "password" ]; then
+              # Show password without masking
               printf "  ${cyan}%s:${reset} ${red}%s${reset}\n" "$(format_case "$key")" "$value"
             elif [ "$key" = "email" ]; then
               printf "  ${cyan}%s:${reset} ${green}%s${reset}\n" "$(format_case "$key")" "$value"
@@ -498,12 +508,14 @@ format_search_results() {
 }
 
 
+# Validate we have at least one field
 if [ ${#argc_fields[@]} -eq 0 ]; then
   echo "${red}Error:${reset} At least one field type must be specified (email, ip, username, password, hash)" >&2
   echo "Usage: $(basename "$0") <term> <fields...> [options]" >&2
   exit 1
 fi
 
+# Validate field types
 valid_fields=("email" "ip" "username" "password" "hash")
 for field in "${argc_fields[@]}"; do
   if ! [[ " ${valid_fields[@]} " =~ " ${field} " ]]; then
@@ -515,6 +527,7 @@ done
 validate_term "$argc_term" "$argc_wildcard"
 validate_categories "$argc_categories"
 
+# Build fields array from positional arguments
 fields_json=$(printf '%s\n' "${argc_fields[@]}" | jq -R . | jq -s .)
 
 payload="{\"term\":\"$argc_term\",\"fields\":$fields_json"
